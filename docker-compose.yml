@@ -1,0 +1,97 @@
+x-database-env: &database_env
+  LOCAL_DEMO: "false"
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-monitoring}
+  POSTGRES_USER: ${POSTGRES_USER:-monitoring}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+x-app: &app
+  build:
+    context: .
+    target: app
+  init: true
+  restart: unless-stopped
+  environment: *database_env
+
+x-celery-env: &celery_env
+  <<: *database_env
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.31.0-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-monitoring}
+      POSTGRES_USER: ${POSTGRES_USER:-monitoring}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    build:
+      context: .
+      target: worker
+    env_file: .env
+    environment: *celery_env
+    command: ["celery", "-A", "src.tasks.celery_app:app", "worker", "--loglevel=INFO"]
+    stop_grace_period: 60s
+    depends_on: &worker_dependencies
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    <<: *app
+    environment: *celery_env
+    command: ["celery", "-A", "src.tasks.celery_app:app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/schedule"]
+    volumes:
+      - beat-data:/var/lib/celery
+    depends_on: *worker_dependencies
+
+  streamlit:
+    <<: *app
+    environment: *celery_env
+    command: ["streamlit", "run", "src/dashboard/app.py", "--server.address=0.0.0.0", "--server.headless=true"]
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on: *worker_dependencies
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8501/_stcore/health', timeout=2).close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+  beat-data:

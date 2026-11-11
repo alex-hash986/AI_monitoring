@@ -1,0 +1,17 @@
+pydantic>=2.14.3,<3
+pydantic-settings>=2.12,<3
+SQLAlchemy>=2.0.44,<2.1
+psycopg2-binary>=2.9.11,<3
+alembic>=1.17,<2
+celery[redis]>=5.7,<6
+redis>=6.4,<9
+beautifulsoup4>=4.14,<5
+httpx>=0.28.1,<0.29
+playwright>=1.60,<2
+Scrapy>=2.13,<3
+openai>=2,<3
+streamlit>=1.50,<2
+plotly>=6.3,<7
+pandas>=2.3,<4
+python-telegram-bot>=22,<23
+python-docx>=1.2,<2
